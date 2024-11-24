@@ -3,6 +3,8 @@
 #include <Wire.h>
 #include <MPU6050_light.h>
 #include <DallasTemperature.h>
+#include "DFRobot_EC10.h"
+#include <EEPROM.h>
 // #include <PID_v1_bc.h>
 #include <Servo.h>
 #include <Adafruit_NeoPixel.h>
@@ -22,12 +24,16 @@
 
 // Define servo pin
 #define servo1_pwm 13
-#define servo2_pwm 13
+#define servo2_pwm 4
 
 #define ONE_WIRE_BUS A1 // pin for the DS18B20 data line
 
 // Define chip select pin for SD card
 #define SD_CS_PIN 23
+
+#define EC_Pin A2 // Pin for conductivitiy probe
+
+#define EC_THRESH 100
 
 Servo servo1; // Create servo object
 Servo servo2;
@@ -38,6 +44,8 @@ OneWire oneWire(ONE_WIRE_BUS);       // Create a OneWire instance to communicate
 DallasTemperature sensors(&oneWire); // Pass oneWire reference to Dallas Temperature sensor
 
 Adafruit_NeoPixel pixel(NUM_PIXELS, PIN_NEOPIXEL, NEO_GRB + NEO_KHZ800); // Status LED
+
+DFRobot_EC10 ec; // Create and instance for the conductivity probe
 
 // Define files
 SdFat SD;
@@ -67,6 +75,10 @@ float tempChange;
 // variables to store temperature
 double temperatureC; // Current temperature
 double initTemp;     // Initial temperature for differential calculation
+
+// Variables for conductivity probe
+double voltage;
+double ecValue;
 
 double data[4]; // Data array
 
@@ -288,6 +300,7 @@ void setup() // Setup (executes once)
   // Inject the contents of the syringe
   inject();
 
+  ec.begin();
   sensors.begin();                       // Initialize the DS18B20 sensor
   sensors.requestTemperatures();         // Request temperature from all devices on the bus
   initTemp = sensors.getTempCByIndex(0); // Get temperature in Celsius
@@ -333,6 +346,9 @@ void loop() // Loop (main loop)
 {
   sensors.requestTemperatures();             // Request temperature from all devices on the bus
   temperatureC = sensors.getTempCByIndex(0); // Get temperature in Celsius
+
+  voltage = analogRead(EC_Pin)/1024.0*5000;
+  ecValue = ec.readEC(voltage, temperatureC);
 
   mpu.update();             // Update MPU readings
   zAngle = mpu.getAngleZ(); // Get z-axis angle from MPU
@@ -386,6 +402,18 @@ void loop() // Loop (main loop)
   // // Update PID model
   // PID_loop();
 
+  if(ecValue >= EC_THRESH) {
+    // Stop driving
+    stop_driving();
+
+    // Indicate status to be finished
+    pixel.setPixelColor(0, 0, 0, 255);
+    pixel.show();
+
+    while (1)
+      ; // Do nothing for remainder of uptime
+  }
+  
   if (tempChange >= tempDiff)
   {
     // Stop driving
@@ -398,4 +426,5 @@ void loop() // Loop (main loop)
     while (1)
       ; // Do nothing for remainder of uptime
   }
+  ec.calibration(voltage, temperatureC); // Calibration process
 }
