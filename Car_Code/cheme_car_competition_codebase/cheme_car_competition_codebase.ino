@@ -20,11 +20,13 @@
 #define stirPin2 A3
 
 // Define servo pin
-#define servo_pwm 13
+#define servo1_pwm 13
+#define servo2_pwm 4
 
 #define ONE_WIRE_BUS A1 // pin for the DS18B20 data line
 
-Servo servo; // Create servo object
+Servo servo1; // Create servo object
+Servo servo2;
 
 // MPU6050 mpu(Wire); // Create MPU6050 instance
 
@@ -107,9 +109,15 @@ void stop_driving() // Stop function
 
 void servo_dump() // Dump contents of bowl into braking vessel with servo
 {
-  servo.writeMicroseconds(2600); // Rotate to 180 deg position without delay
+  servo1.writeMicroseconds(2600); // Rotate to 180 deg position without delay
   delay(1000);                   // Wait 1 s
-  servo.writeMicroseconds(500);  // Return to default position
+  servo1.writeMicroseconds(500);  // Return to default position
+}
+
+void backupServo_dump() {
+  servo2.writeMicroseconds(2600); // Rotate to 180 deg position without delay
+  delay(1000);                   // Wait 1 s
+  servo2.writeMicroseconds(500);  // Return to default position
 }
 
 void start_stir() // Start stirring mechanism
@@ -226,7 +234,8 @@ void setup() // Setup (executes once)
   // r_MPU = 0.1;       // Measurement noise covariance
 
   // Initialize servo to default position
-  servo.attach(servo_pwm, 500, 2600);
+  servo1.attach(servo1_pwm, 500, 2600);
+  servo2.attach(servo2_pwm, 500, 2600);
 
   // Dump reactants before starting drive
   servo_dump();
