@@ -284,28 +284,12 @@ void loop() // Loop (main loop)
     currTime = (millis() - startTime) / 1000; // Taken to check time against first measurement
   }
 
-  tempDiff = -0.068 * currTime + 1.4; // Update temperature differential
-  tempChange = x_temp - initTemp;     // Calculate temperature change
-
   drive_forward(128); // 50% speed in slow decay mode
 
   // // Update PID model
   // PID_loop();
 
   if(ecValue >= EC_THRESH) {
-    // Stop driving
-    stop_driving();
-
-    // Indicate status to be finished
-    pixel.setPixelColor(0, 0, 0, 255);
-    pixel.show();
-
-    while (1)
-      ; // Do nothing for remainder of uptime
-  }
-  
-  if (tempChange >= tempDiff)
-  {
     // Stop driving
     stop_driving();
 

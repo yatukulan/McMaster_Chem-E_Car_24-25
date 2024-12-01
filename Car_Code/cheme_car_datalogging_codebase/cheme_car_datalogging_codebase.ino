@@ -386,9 +386,6 @@ void loop() // Loop (main loop)
     dataFile.close();
   }
 
-  tempDiff = -0.068 * currTime + 1.4; // Update temperature differential
-  tempChange = x_temp - initTemp;     // Calculate temperature change
-
   drive_forward(128); // 50% speed in slow decay mode
 
   // // Update PID model
@@ -404,19 +401,5 @@ void loop() // Loop (main loop)
 
     while (1)
       ; // Do nothing for remainder of uptime
-  }
-  
-  if (tempChange >= tempDiff)
-  {
-    // Stop driving
-    stop_driving();
-
-    // Indicate status to be finished
-    pixel.setPixelColor(0, 0, 0, 255);
-    pixel.show();
-
-    while (1)
-      ; // Do nothing for remainder of uptime
-  }
-  ec.calibration(voltage, temperatureC); // Calibration process
+  } 
 }
