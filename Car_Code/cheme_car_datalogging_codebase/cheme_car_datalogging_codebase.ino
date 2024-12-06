@@ -3,6 +3,8 @@
 #include <Wire.h>
 #include <MPU6050_light.h>
 #include <DallasTemperature.h>
+#include "DFRobot_EC10.h"
+#include <EEPROM.h>
 // #include <PID_v1_bc.h>
 #include <Servo.h>
 #include <Adafruit_NeoPixel.h>
@@ -28,6 +30,10 @@
 // Define chip select pin for SD card
 #define SD_CS_PIN 23
 
+#define EC_Pin A2 // Pin for conductivitiy probe
+
+#define EC_THRESH 100
+
 Servo servo; // Create servo object
 
 MPU6050 mpu(Wire); // Create MPU6050 instance
@@ -36,6 +42,8 @@ OneWire oneWire(ONE_WIRE_BUS);       // Create a OneWire instance to communicate
 DallasTemperature sensors(&oneWire); // Pass oneWire reference to Dallas Temperature sensor
 
 Adafruit_NeoPixel pixel(NUM_PIXELS, PIN_NEOPIXEL, NEO_GRB + NEO_KHZ800); // Status LED
+
+DFRobot_EC10 ec; // Create and instance for the conductivity probe
 
 // Define files
 SdFat SD;
@@ -65,6 +73,10 @@ float tempChange;
 // variables to store temperature
 double temperatureC; // Current temperature
 double initTemp;     // Initial temperature for differential calculation
+
+// Variables for conductivity probe
+double voltage;
+double ecValue;
 
 double data[4]; // Data array
 
@@ -130,6 +142,7 @@ void servo_dump() // Dump contents of bowl into braking vessel with servo
   delay(1000);                   // Wait 1 s
   servo.writeMicroseconds(500);  // Return to default position
 }
+
 
 void start_stir() // Start stirring mechanism
 {
@@ -280,6 +293,7 @@ void setup() // Setup (executes once)
   // Inject the contents of the syringe
   inject();
 
+  ec.begin();
   sensors.begin();                       // Initialize the DS18B20 sensor
   sensors.requestTemperatures();         // Request temperature from all devices on the bus
   initTemp = sensors.getTempCByIndex(0); // Get temperature in Celsius
@@ -303,6 +317,7 @@ void setup() // Setup (executes once)
   // Initialize servo to default position
   servo.attach(servo_pwm, 500, 2600);
 
+
   // Dump reactants before starting drive
   servo_dump();
 
@@ -323,6 +338,9 @@ void loop() // Loop (main loop)
 {
   sensors.requestTemperatures();             // Request temperature from all devices on the bus
   temperatureC = sensors.getTempCByIndex(0); // Get temperature in Celsius
+
+  voltage = analogRead(EC_Pin)/1024.0*5000;
+  ecValue = ec.readEC(voltage, temperatureC);
 
   mpu.update();             // Update MPU readings
   zAngle = mpu.getAngleZ(); // Get z-axis angle from MPU
@@ -368,16 +386,12 @@ void loop() // Loop (main loop)
     dataFile.close();
   }
 
-  tempDiff = -0.068 * currTime + 1.4; // Update temperature differential
-  tempChange = x_temp - initTemp;     // Calculate temperature change
-
   drive_forward(128); // 50% speed in slow decay mode
 
   // // Update PID model
   // PID_loop();
 
-  if (tempChange >= tempDiff)
-  {
+  if(ecValue >= EC_THRESH) {
     // Stop driving
     stop_driving();
 
@@ -387,5 +401,5 @@ void loop() // Loop (main loop)
 
     while (1)
       ; // Do nothing for remainder of uptime
-  }
+  } 
 }
