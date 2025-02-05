@@ -233,6 +233,10 @@ void setup() // Setup (executes once)
   servo_dump(prop_servo, 2500, 1000);
   servo_dump(brak_servo, 1500, 6000);
 
+  // Cut power to servos
+  brak_servo.detach();
+  prop_servo.detach();
+
   // Activate PID
   // car_pid.SetMode(AUTOMATIC);
 
