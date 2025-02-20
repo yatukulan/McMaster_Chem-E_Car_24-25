@@ -27,6 +27,8 @@
 
 #define BRAK_TEMP_SENS A1 // Pin for the teperature sensor data line
 
+#define BNO08X_RESET -1 // No reset pin for IMU over I2C, only enabled for SPI 
+
 #define BOOST_I2C 0x75 // This is the address when pin on converter is set to LOW
 
 // Struct for Euler Angles
@@ -100,7 +102,7 @@ int drive_speed = 128;
 int max_offset;
 
 // PID control object; input, output, and goal angle are passed by pointer.
-PID car_pid(&x_MPU, &pid_output, &goal_angle, k_p, k_i, k_d, DIRECT);
+PID car_pid(&angle_diff, &pid_output, &goal_angle, k_p, k_i, k_d, DIRECT);
 
 void init_buck_boost(void)
 {
