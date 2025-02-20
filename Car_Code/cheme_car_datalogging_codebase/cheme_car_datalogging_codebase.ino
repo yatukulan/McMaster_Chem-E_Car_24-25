@@ -1,5 +1,6 @@
 // Included libraries
 #include <OneWire.h>
+#include <Wire.h>
 #include <Adafruit_BNO08x.h>
 #include <DallasTemperature.h>
 #include <PID_v1_bc.h>
@@ -26,6 +27,8 @@
 #define PROP_SERVO_PWM 4
 
 #define BRAK_TEMP_SENS A1 // Pin for the teperature sensor data line
+
+#define BOOST_I2C 0x75 // This is the address when pin on converter is set to LOW
 
 // Define chip select pin for SD card
 #define SD_CS_PIN 23
@@ -119,6 +122,37 @@ int max_offset;
 // PID control object; input, output, and goal angle are passed by pointer.
 PID car_pid(&x_MPU, &pid_output, &goal_angle, k_p, k_i, k_d, DIRECT);
 
+void init_buck_boost(void)
+{
+  // Change internal output voltage to 676.68 mV
+  // Change LSB
+  Wire.begin(); // Begin I2C communication
+  Wire.beginTransmission(BOOST_I2C);
+  Wire.write(0x00); // Register Address
+  Wire.write(0x5F); // Changed LSB
+  Wire.endTransmission();
+
+  //  Change MSB
+  Wire.beginTransmission(BOOST_I2C);
+  Wire.write(0x01); // Register Address
+  Wire.write(0x04); // Changed MSB
+  Wire.endTransmission();
+
+  // Disable current limiter
+  Wire.beginTransmission(BOOST_I2C);
+  Wire.write(0x02); // Register Address
+  Wire.write(0x64); // Changed LSB
+  Wire.endTransmission();
+
+  // Enable output
+  Wire.beginTransmission(BOOST_I2C);
+  Wire.write(0x06); // Register Address
+  Wire.write(0xA0); // Changed LSB
+  Wire.endTransmission();
+
+  Wire.end();
+}
+
 void drive_forward(int speed) // Drive function
 {
   // Left wheel
@@ -130,7 +164,7 @@ void drive_forward(int speed) // Drive function
   analogWrite(RIGHT_PWM_1, speed - left_offset);
 }
 
-void stop_driving() // Stop function
+void stop_driving(void) // Stop function
 {
   // Left wheel
   digitalWrite(LEFT_PWM_1, HIGH);
@@ -156,7 +190,7 @@ void start_stir(int stir_pin_1, int stir_pin_2, int speed) // Start stirring mec
   analogWrite(stir_pin_2, speed); // Set motor to speed obtained through testing
 }
 
-void PID_loop() // Update motor speeds according to PID algorithm
+void PID_loop(void) // Update motor speeds according to PID algorithm
 {
   car_pid.Compute(); // Run compute algorithm and updates pid_output
 
@@ -271,7 +305,7 @@ void quaternionToEulerRV(sh2_RotationVectorWAcc_t *rotational_vector, euler_t *y
   quaternionToEuler(rotational_vector->real, rotational_vector->i, rotational_vector->j, rotational_vector->k, ypr, degrees);
 }
 
-void setup() // Setup (executes once)
+void setup(void) // Setup (executes once)
 {
   // Indicate status to be initialized
   pixel.begin();
@@ -321,6 +355,8 @@ void setup() // Setup (executes once)
   pinMode(BRAK_STIR_PWM_2, OUTPUT);
   pinMode(PROP_STIR_PWM_1, OUTPUT);
   pinMode(PROP_STIR_PWM_2, OUTPUT);
+
+  init_buck_boost();
 
   // Setting the stir speed
   start_stir(BRAK_STIR_PWM_1, BRAK_STIR_PWM_2, 146);
@@ -387,7 +423,7 @@ void setup() // Setup (executes once)
   drive_forward(0);
 }
 
-void loop() // Loop (main loop)
+void loop(void) // Loop (main loop)
 {
   // Get time on each measurement of sensor
   if (first_run)
@@ -444,7 +480,7 @@ void loop() // Loop (main loop)
 
   drive_forward(128); // 50% speed in slow decay mode
 
-  // // Update PID model
+  // Update PID model
   PID_loop();
 
   if (temp_change >= temp_diff)
