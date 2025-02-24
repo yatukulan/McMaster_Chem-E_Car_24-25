@@ -28,7 +28,7 @@
 
 #define BRAK_TEMP_SENS A1 // Pin for the teperature sensor data line
 
-#define BNO08X_RESET -1 // No reset pin for IMU over I2C, only enabled for SPI 
+#define BNO08X_RESET -1 // No reset pin for IMU over I2C, only enabled for SPI
 
 #define BOOST_I2C 0x75 // This is the address when pin on converter is set to LOW
 
@@ -58,21 +58,21 @@ Adafruit_NeoPixel pixel(NUM_PIXELS, PIN_NEOPIXEL, NEO_GRB + NEO_KHZ800); // Stat
 
 // Define files
 SdFat sd;
-File32 root;
-File32 next_file;
-File32 data_file;
+FsFile root;
+FsFile next_file;
+FsFile data_file;
 SdSpiConfig config(SD_CS_PIN, DEDICATED_SPI, SD_SCK_MHZ(16), &SPI1);
 String file_name;
 
 bool is_file_new = true; // Checks for new file
 
-// The target angle to keep car straight
-double goal_angle = 0.0;
+// The target yaw angle to keep car straight
+double goal_yaw = 0.0;
 
 // Define IMU variables
-double z_angle;          // z-axis angle
-double init_angle = 0.0; // initial angle
-double angle_diff = 0.0; // z-axis difference
+double yaw;            // yaw angle
+double init_yaw = 0.0; // initial yaw angle
+double yaw_diff = 0.0; // yaw angle difference
 
 // Temperature threshold
 float temp_diff;
@@ -90,22 +90,23 @@ double init_temp;     // Initial temperature for differential calculation
 // KALMAN FILTER variables
 double x_temp; // Filtered temperature
 double p_temp; // Initial error covariance
-// double x_MPU;  // Filtered temperature
-// double p_MPU;  // Initial error covariance
+double x_IMU;  // Filtered temperature
+double p_IMU;  // Initial error covariance
 
 // Process noise and measurement noise
 double q_temp; // Process noise covariance
 double r_temp; // Measurement noise covariance
-// double q_MPU;  // Process noise covariance
-// double r_MPU;  // Measurement noise covariance
+double q_IMU;  // Process noise covariance
+double r_IMU;  // Measurement noise covariance
 
 // Keeping track of time
 float curr_time = 0;
 unsigned long start_time;
 bool first_run = true;
 
-int data_size = 2;      // Number of items to log
-double data[data_size]; // Data array
+const int data_size = 8;      // Number of items to log
+String data[data_size]; // Data array
+char data_buf[11]; // Data buffer
 
 // PID Loop variables
 double pid_output; // The output correction from the PID algorithm
@@ -122,13 +123,20 @@ int drive_speed = 128;
 int max_offset;
 
 // PID control object; input, output, and goal angle are passed by pointer.
-PID car_pid(&angle_diff, &pid_output, &goal_angle, k_p, k_i, k_d, DIRECT);
+PID car_pid(&yaw_diff, &pid_output, &goal_yaw, k_p, k_i, k_d, DIRECT);
+
+// Buck boost converter status outputs
+bool buck_boost_short_circuit;
+bool buck_boost_overcurrent;
+bool buck_boost_overvoltage;
+String buck_boost_op_status;
 
 void init_buck_boost(void)
 {
+  Wire.begin(); // Begin I2C communication
+
   // Change internal output voltage to 676.68 mV
   // Change LSB
-  Wire.begin(); // Begin I2C communication
   Wire.beginTransmission(BOOST_I2C);
   Wire.write(0x00); // Register Address
   Wire.write(0x5F); // Changed LSB
@@ -151,8 +159,50 @@ void init_buck_boost(void)
   Wire.write(0x06); // Register Address
   Wire.write(0xA0); // Changed LSB
   Wire.endTransmission();
+}
 
-  Wire.end();
+String check_buck_boost_status(void)
+{
+  // Read status register
+  Wire.beginTransmission(BOOST_I2C);
+  Wire.write(0x07);
+  Wire.endTransmission(false);
+  Wire.requestFrom(BOOST_I2C, 1);
+
+  char status = Wire.read();
+
+  // Check SCP status
+  if (((status >> 7) & 0x01))
+  {
+    buck_boost_short_circuit = true;
+  }
+
+  // Check OCP status
+  if (((status >> 6) & 0x01))
+  {
+    buck_boost_overcurrent = true;
+  }
+
+  // Check OVP status
+  if (((status >> 5) & 0x01))
+  {
+    buck_boost_overvoltage = true;
+  }
+
+  // Check operating status
+  switch (status << 6)
+  {
+  case 0x00:
+    return "boost";
+  case 0x40:
+    return "buck";
+  case 0x80:
+    return "buck-boost";
+  case 0xC0:
+    return "reserved";
+  default:
+    return "";
+  }
 }
 
 void drive_forward(int speed) // Drive function
@@ -237,12 +287,12 @@ void kalman_filter(double x_k, double p_k, double q, double r, double input, boo
   }
   else
   {
-    // x_MPU = x_k;
-    // p_MPU = p_k;
+    x_IMU = x_k;
+    p_IMU = p_k;
   }
 }
 
-void printer(bool serial_true, unsigned long millis_time, double outputs[data_size]) // Output function
+void printer(bool serial_true, unsigned long millis_time, String outputs[data_size]) // Output function
 {
   if (serial_true) // Print data to serial or SD card file accordingly in .csv format
   {
@@ -358,7 +408,12 @@ void setup(void) // Setup (executes once)
   pinMode(PROP_STIR_PWM_1, OUTPUT);
   pinMode(PROP_STIR_PWM_2, OUTPUT);
 
-  init_buck_boost();
+  // Initialize buck-boost converter status outputs
+  buck_boost_short_circuit = false;
+  buck_boost_overcurrent = false;
+  buck_boost_overvoltage = false;
+
+  init_buck_boost(); // Initialize buck-boost converter
 
   // Setting the stir speed
   start_stir(BRAK_STIR_PWM_1, BRAK_STIR_PWM_2, 146);
@@ -377,9 +432,9 @@ void setup(void) // Setup (executes once)
     bno08x.getSensorEvent(&sensor_value);
     quaternionToEulerRV(&sensor_value.un.arvrStabilizedRV, &ypr, true);
 
-    init_angle = ypr.yaw;
-    z_angle = ypr.yaw;
-    angle_diff = z_angle - init_angle;
+    init_yaw = ypr.yaw;
+    yaw = ypr.yaw;
+    yaw_diff = yaw - init_yaw;
 
     delay(200);
   }
@@ -389,10 +444,10 @@ void setup(void) // Setup (executes once)
   p_temp = 0.1;       // Initial error covariance
   q_temp = 0.01;      // Process noise covariance
   r_temp = 0.5;       // Measurement noise covariance
-  // x_MPU = z_angle;    // Initial state estimate
-  // p_MPU = 1.0;       // Initial error covariance
-  // q_MPU = 0.01;      // Process noise covariance
-  // r_MPU = 0.1;       // Measurement noise covariance
+  x_IMU = yaw_diff;   // Initial state estimate
+  p_IMU = 0.0;        // Initial error covariance
+  q_IMU = 0.01;       // Process noise covariance
+  r_IMU = 5.674;      // Measurement noise covariance
 
   // Initialize servo to default position
   brak_servo.attach(BRAK_SERVO_PWM, 500, 2500);
@@ -439,43 +494,55 @@ void loop(void) // Loop (main loop)
     curr_time = (millis() - start_time) / 1000; // Taken to check time against first measurement
   }
 
+  buck_boost_op_status = check_buck_boost_status();
+
   temp_sensors.requestTemperatures();              // Request temperature from all devices on the bus
   temperature_c = temp_sensors.getTempCByIndex(0); // Get temperature in Celsius
 
   bno08x.getSensorEvent(&sensor_value);
   quaternionToEulerRV(&sensor_value.un.arvrStabilizedRV, &ypr, true);
 
-  z_angle = ypr.yaw;
-  angle_diff = z_angle - init_angle;
+  yaw = ypr.yaw;
+  yaw_diff = yaw - init_yaw;
 
   // Update kalman filters
   kalman_filter(x_temp, p_temp, q_temp, r_temp, temperature_c, true);
-  // kalman_filter(x_MPU, p_MPU, q_MPU, r_MPU, z_angle, false);
+  kalman_filter(x_IMU, p_IMU, q_IMU, r_IMU, yaw, false);
+
+  // Update data array
+  dtostrf(temperature_c, 3, 6, data_buf);
+  data[0] = String(data_buf);
+  dtostrf(x_temp, 3, 6, data_buf);
+  data[1] = String(data_buf);
+  dtostrf(yaw_diff, 3, 6, data_buf);
+  data[2] = String(data_buf);
+  dtostrf(x_IMU, 3, 6, data_buf);
+  data[3] = String(data_buf);
+  data[4] = String(buck_boost_short_circuit);
+  data[5] = String(buck_boost_overcurrent);
+  data[6] = String(buck_boost_overvoltage);
+  data[7] = buck_boost_op_status;
 
   // Open csv file
   file_name = "Run_" + String(run_count) + ".csv";
   data_file = sd.open(file_name, FILE_WRITE);
 
+  // Write to csv file
   if (data_file)
   {
-    // Writes header if it's a new file
+    // Write file header
     if (is_file_new)
     {
-      data_file.println("Time,Temperature,Filtered Temperature");
+      data_file.println("Time,Temperature,Filtered Temperature,Yaw,Filtered Yaw,SCP,OCP,OVP,Operating Status");
       is_file_new = false;
     }
 
-    // Update data array
-    data[0] = temperature_c;
-    data[1] = x_temp;
-    data[2] = angle_diff;
-    // data[3] = x_MPU;
-
-    // Write variable data to the file in CSV format
-    printer(false, curr_time, data);
+    printer(false, curr_time, data); // Write variable data to the file in CSV format
 
     data_file.close();
   }
+
+  printer(true, curr_time, data); // Write variable data to serial in CSV format
 
   temp_diff = -0.068 * curr_time + 1.4; // Update temperature differential
   temp_change = x_temp - init_temp;     // Calculate temperature change
@@ -489,6 +556,8 @@ void loop(void) // Loop (main loop)
   {
     // Stop driving
     stop_driving();
+
+    Wire.end(); // End I2C comms with buck-boost converter
 
     // Indicate status to be finished
     pixel.setPixelColor(0, 0, 0, 255);

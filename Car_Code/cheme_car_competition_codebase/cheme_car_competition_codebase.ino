@@ -27,7 +27,7 @@
 
 #define BRAK_TEMP_SENS A1 // Pin for the teperature sensor data line
 
-#define BNO08X_RESET -1 // No reset pin for IMU over I2C, only enabled for SPI 
+#define BNO08X_RESET -1 // No reset pin for IMU over I2C, only enabled for SPI
 
 #define BOOST_I2C 0x75 // This is the address when pin on converter is set to LOW
 
@@ -52,13 +52,13 @@ DallasTemperature temp_sensors(&one_wire); // Pass OneWire reference to Dallas T
 
 Adafruit_NeoPixel pixel(NUM_PIXELS, PIN_NEOPIXEL, NEO_GRB + NEO_KHZ800); // Status LED
 
-// The target angle to keep car straight
-double goal_angle = 0.0;
+// The target yaw angle to keep car straight
+double goal_yaw = 0.0;
 
 // Define IMU variables
-double z_angle;          // z-axis angle
-double init_angle = 0.0; // initial angle
-double angle_diff = 0.0; // z-axis difference
+double yaw;            // yaw angle
+double init_yaw = 0.0; // initial yaw angle
+double yaw_diff = 0.0; // yaw angle difference
 
 // Temperature threshold
 float temp_diff;
@@ -73,14 +73,14 @@ double init_temp;     // Initial temperature for differential calculation
 // KALMAN FILTER variables
 double x_temp; // Filtered temperature
 double p_temp; // Initial error covariance
-// double x_MPU;  // Filtered temperature
-// double p_MPU;  // Initial error covariance
+double x_IMU;  // Filtered temperature
+double p_IMU;  // Initial error covariance
 
 // Process noise and measurement noise
 double q_temp; // Process noise covariance
 double r_temp; // Measurement noise covariance
-// double q_MPU;  // Process noise covariance
-// double r_MPU;  // Measurement noise covariance
+double q_IMU;  // Process noise covariance
+double r_IMU;  // Measurement noise covariance
 
 // Keeping track of time
 float curr_time = 0;
@@ -102,13 +102,14 @@ int drive_speed = 128;
 int max_offset;
 
 // PID control object; input, output, and goal angle are passed by pointer.
-PID car_pid(&angle_diff, &pid_output, &goal_angle, k_p, k_i, k_d, DIRECT);
+PID car_pid(&yaw_diff, &pid_output, &goal_yaw, k_p, k_i, k_d, DIRECT);
 
 void init_buck_boost(void)
 {
+  Wire.begin(); // Begin I2C communication
+
   // Change internal output voltage to 676.68 mV
   // Change LSB
-  Wire.begin(); // Begin I2C communication
   Wire.beginTransmission(BOOST_I2C);
   Wire.write(0x00); // Register Address
   Wire.write(0x5F); // Changed LSB
@@ -217,8 +218,8 @@ void kalman_filter(double x_k, double p_k, double q, double r, double input, boo
   }
   else
   {
-    // x_MPU = x_k;
-    // p_MPU = p_k;
+    x_IMU = x_k;
+    p_IMU = p_k;
   }
 }
 
@@ -304,9 +305,9 @@ void setup(void) // Setup (executes once)
     bno08x.getSensorEvent(&sensor_value);
     quaternionToEulerRV(&sensor_value.un.arvrStabilizedRV, &ypr, true);
 
-    init_angle = ypr.yaw;
-    z_angle = ypr.yaw;
-    angle_diff = z_angle - init_angle;
+    init_yaw = ypr.yaw;
+    yaw = ypr.yaw;
+    yaw_diff = yaw - init_yaw;
 
     delay(200);
   }
@@ -316,10 +317,10 @@ void setup(void) // Setup (executes once)
   p_temp = 0.1;       // Initial error covariance
   q_temp = 0.01;      // Process noise covariance
   r_temp = 0.5;       // Measurement noise covariance
-  // x_MPU = z_angle;    // Initial state estimate
-  // p_MPU = 1.0;       // Initial error covariance
-  // q_MPU = 0.01;      // Process noise covariance
-  // r_MPU = 0.1;       // Measurement noise covariance
+  x_IMU = yaw_diff;   // Initial state estimate
+  p_IMU = 0.0;        // Initial error covariance
+  q_IMU = 0.01;       // Process noise covariance
+  r_IMU = 5.674;      // Measurement noise covariance
 
   // Initialize servo to default position
   brak_servo.attach(BRAK_SERVO_PWM, 500, 2500);
@@ -376,12 +377,12 @@ void loop(void) // Loop (main loop)
   bno08x.getSensorEvent(&sensor_value);
   quaternionToEulerRV(&sensor_value.un.arvrStabilizedRV, &ypr, true);
 
-  z_angle = ypr.yaw;
-  angle_diff = z_angle - init_angle;
+  yaw = ypr.yaw;
+  yaw_diff = yaw - init_yaw;
 
   // Update kalman filters
   kalman_filter(x_temp, p_temp, q_temp, r_temp, temperature_c, true);
-  // kalman_filter(x_MPU, p_MPU, q_MPU, r_MPU, z_angle, false);
+  kalman_filter(x_IMU, p_IMU, q_IMU, r_IMU, yaw, false);
 
   temp_diff = -0.068 * curr_time + 1.4; // Update temperature differential
   temp_change = x_temp - init_temp;     // Calculate temperature change
